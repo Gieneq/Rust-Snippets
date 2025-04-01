@@ -1,0 +1,9 @@
+[package]
+name = "snippets"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+snippets_common = { path = "../snippets_common"}
+snippets_tokio = { path = "../snippets_tokio"}
+
