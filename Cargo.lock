@@ -209,6 +209,14 @@ name = "snippets_common"
 version = "0.1.0"
 
 [[package]]
+name = "snippets_multiplayer"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "snippets_tokio"
 version = "0.1.0"
 dependencies = [
