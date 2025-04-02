@@ -8,6 +8,16 @@ pub struct Vector2X<T> {
     pub y: T,
 }
 
+pub type Rect2F = Rect2X<f32>;
+pub type Rect2U = Rect2X<u32>;
+pub type Rect2I = Rect2X<i32>;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Rect2X<T> {
+    pub pos: Vector2X<T>,
+    pub size: Vector2X<T>,
+}
+
 impl<T> Vector2X<T> 
 where 
     T: Default
@@ -20,6 +30,45 @@ where
         Self { x: T::default(), y: T::default() }
     }
 }
+
+impl<T> Vector2X<T> 
+where 
+    T: Into<f32> + Copy
+{
+    pub fn length_squared(&self) -> f32 {
+        let xf: f32 = T::into(self.x); 
+        let yf: f32 = T::into(self.y); 
+        xf.powi(2) + yf.powi(2)
+    }
+
+    pub fn length(&self) -> f32 {
+        self.length_squared().sqrt()
+    }
+
+    pub fn normal(&self) -> Vector2X<f32> {
+        let len = self.length();
+        Vector2X {
+            x: T::into(self.x) / len,
+            y: T::into(self.y) / len,
+        }
+    }
+}
+
+impl Vector2X<f32>
+{
+    pub fn dot(&self, rhs: Self) -> f32 {
+        self.x * rhs.x + self.y * rhs.y
+    }
+}
+
+// impl<T> Vector2X<T>
+// where 
+//     T: std::ops::Mul<Output = T> + std::ops::Add<Output = T> + Into<f32> + Copy
+// {
+//     pub fn dot(&self, rhs: Self) -> f32 {
+//         T::into(self.x * rhs.x + self.y * rhs.y)
+//     }
+// }
 
 impl<T> std::ops::Add for Vector2X<T> 
 where 
@@ -44,23 +93,15 @@ where
         self.y += rhs.y;
     }
 }
-
-impl std::ops::Neg for Vector2X<f32> {
+impl<T> std::ops::Neg for Vector2X<T> 
+where 
+    T: std::ops::Neg<Output = T>
+{
     type Output = Self;
     fn neg(self) -> Self::Output {
         Self {
-            x: -self.x,
-            y: -self.y,
-        }
-    }
-}
-
-impl std::ops::Neg for Vector2X<i32> {
-    type Output = Self;
-    fn neg(self) -> Self::Output {
-        Self {
-            x: -self.x,
-            y: -self.y,
+            x: T::neg(self.x),
+            y: T::neg(self.y),
         }
     }
 }
@@ -78,6 +119,19 @@ where
     }
 }
 
+impl<T> std::ops::Sub for Vector2X<T> 
+where 
+    T: std::ops::Sub<Output = T>
+{
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self {
+            x: T::sub(self.x, rhs.x),
+            y: T::sub(self.y, rhs.y)
+        }
+    }
+}
+
 impl From<Vector2X<f32>> for Vector2X<u32> {
     fn from(value: Vector2X<f32>) -> Self {
         Self { x: value.x as u32, y: value.y as u32 }
@@ -87,6 +141,24 @@ impl From<Vector2X<f32>> for Vector2X<u32> {
 impl From<Vector2X<u32>> for Vector2X<f32> {
     fn from(value: Vector2X<u32>) -> Self {
         Self { x: value.x as f32, y: value.y as f32 }
+    }
+}
+
+impl<T> Rect2X<T> {
+    pub fn new(x: T, y: T, w: T, h: T) -> Self {
+        Self { pos: Vector2X { x, y }, size: Vector2X { x: w, y: h } }
+    }
+}
+
+impl<T> Rect2X<T> 
+where 
+    T: PartialOrd + std::ops::Add<Output = T> + Copy
+{
+    pub fn contains(&self, point: &Vector2X<T>) -> bool {
+        point.x >= self.pos.x
+            && point.y >= self.pos.y
+            && point.x < self.pos.x + self.size.x
+            && point.y < self.pos.y + self.size.y
     }
 }
 
@@ -138,4 +210,40 @@ fn test_vector_casting() {
     let v1_cast_u32 =  Vector2X::<u32>::from(v1);
     assert_eq!(v1_cast_u32.x, 1);
     assert_eq!(v1_cast_u32.y, 2);
+}
+
+#[test]
+fn test_vector_dot() {
+    let v1 = Vector2X::<f32>::new(1.0, 0.0);
+    let v2 = Vector2X::<f32>::new(-1.0, 0.0);
+    let v1_dot_v2 = v1.dot(v2);
+    assert_eq!(v1_dot_v2, -1.0);
+}
+
+#[test]
+fn test_rect_creation() {
+    let position = Vector2X::<f32>::new(1.0, 0.0);
+    let size = Vector2X::<f32>::new(3.0, 5.0);
+    let rect = Rect2X::new(position.x, position.y, size.x, size.y);
+    assert_eq!(rect.pos, position);
+    assert_eq!(rect.size, size);
+}
+
+#[test]
+fn test_rect_containing() {
+    let position = Vector2X::<f32>::new(1.0, 0.0);
+    let size = Vector2X::<f32>::new(3.0, 5.0);
+    let rect = Rect2X::new(position.x, position.y, size.x, size.y);
+
+    let p1_inside = position;
+    let p2_not_inside = position + Vector2X::new(size.x, 0.0);
+    let p3_not_inside = position + Vector2X::new(0.0, size.y);
+    let p4_not_inside = position + size;
+    let p5_inside = position + Vector2X::new(size.x / 2.0, size.y / 2.0);
+
+    assert!(rect.contains(&p1_inside));
+    assert!(!rect.contains(&p2_not_inside));
+    assert!(!rect.contains(&p3_not_inside));
+    assert!(!rect.contains(&p4_not_inside));
+    assert!(rect.contains(&p5_inside));
 }

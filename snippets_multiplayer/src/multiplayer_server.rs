@@ -1,6 +1,6 @@
 use std::{sync::{Arc, Mutex}, time::Duration};
 
-use crate::game::world::World;
+use crate::game::{common::Vector2F, world::World};
 
 #[derive(Debug, thiserror::Error)]
 pub enum MultiplayerServerError {
@@ -49,6 +49,7 @@ impl MultiplayerServer {
 
         let main_task_handler = tokio::spawn(async move {
             loop {
+                // TODO add timing to have steady ticks/sec average
                 tokio::select! {
                     _ = &mut shutdown_receiver => {
                         // Received shutdown signal
@@ -89,6 +90,21 @@ async fn test_server_creation() {
     let server_address = server.get_local_address().unwrap();
     println!("{server_address:?}");
     let server_handler = server.run().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(2000)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    server_handler.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_server_adding_entities() {
+    let server = MultiplayerServer::bind_any_local().await.unwrap();
+    let server_handler = server.run().await.unwrap();
+
+    {
+        let mut world = server_handler.world.lock().unwrap();
+        world.create_entity_npc("Tuna", Vector2F::new(10.5, 20.3));
+        // world.create_entity_npc("Starlette", Vector2F::new(-2.5, 0.0));
+    }
+
+    tokio::time::sleep(Duration::from_millis(30000)).await;
     server_handler.shutdown().await.unwrap();
 }
