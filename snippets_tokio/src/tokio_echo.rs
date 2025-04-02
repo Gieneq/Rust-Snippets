@@ -1,12 +1,7 @@
-use std::{
-    net::SocketAddr, 
-    time::Duration
-};
-
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
+use std::time::Duration;
 
 mod echo_server {
-    type EchoHook = dyn Fn(String, String) + 'static + Send + Sync;
+    type EchoHook = dyn Fn(&str, &str) + 'static + Send + Sync;
 
     use std::{sync::Arc, time::Duration};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
@@ -26,7 +21,7 @@ mod echo_server {
     pub struct EchoServer {
         listener: tokio::net::TcpListener,
         queue_capacity: usize,
-        msg_handler: Option<Arc::<dyn Fn(String, String) + Send + Sync>>,
+        msg_handler: Option<Arc::<EchoHook>>,
     }
 
     pub struct EchoServerHandler {
@@ -45,7 +40,7 @@ mod echo_server {
             })
         }
 
-        pub fn with_listener<F: Fn(String, String) + 'static + Send + Sync>(mut self, msg_handler: F) -> Self {
+        pub fn with_listener<F: Fn(&str, &str) + 'static + Send + Sync>(mut self, msg_handler: F) -> Self {
             self.msg_handler = Some(Arc::new(msg_handler));
             self
         }
@@ -66,7 +61,7 @@ mod echo_server {
                 mut stream: tokio::net::TcpStream, 
                 client_addr: std::net::SocketAddr, 
                 msg_tx: tokio::sync::mpsc::Sender<String>,
-                handler: Option<Arc<EchoHook>>
+                msg_handler: Option<Arc<EchoHook>>
             ) {
                 println!("Incomming connection {client_addr:?}");
                 let (reader, mut writer) = stream.split();
@@ -85,8 +80,8 @@ mod echo_server {
                                 println!("Couldnt queue messages from {client_addr:?} reason {e}");
                             }
 
-                            if let Some(h) = handler.as_ref() {
-                                h(client_addr.to_string(), line_buf.clone());
+                            if let Some(handler) = msg_handler.as_ref() {
+                                handler(&client_addr.to_string(), &line_buf);
                             }
 
                             if let Err(e) = writer.write_all(line_buf.as_bytes()).await {
@@ -283,59 +278,139 @@ mod echo_server {
 
         #[tokio::test]
         async fn test_echo_multiple_messages_with_hook() {
+            let messages_counter = Arc::new(std::sync::atomic::AtomicU32::new(0));
+            let messages_counter_copy = messages_counter.clone();
+
             let echo_server = EchoServer::bind_any_local().await
                 .unwrap()
-                .with_listener(|a, b| {
-                    println!(">> {a}: {b}");
+                .with_listener(move |a, b| {
+                    let value = messages_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    println!(">> {a}: {b} cnt={}", value);
                 });
             let server_address = echo_server.get_local_address().unwrap();
             let echo_server_handle = echo_server.run().unwrap();
 
             client_make_requests(server_address, &["message\n", "aaa\n", "hello1234$%\n"]).await.unwrap();
             echo_server_handle.shutdown().await.unwrap();
+            assert_eq!(messages_counter_copy.load(std::sync::atomic::Ordering::Relaxed), 3);
         }
     }
 }
 
 mod echo_client {
-    struct EchoClient {
+    use std::time::Duration;
 
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+    #[derive(Debug, thiserror::Error)]
+    pub enum EchoClientError {
+        #[error("IoError, reason={0}")]
+        IoError(#[from] std::io::Error),
+
+        #[error("IoError, reason={0}")]
+        TimeoutPassed(#[from] tokio::time::error::Elapsed),
+
+        #[error("BadResponse received='{0}'")]
+        BadResponse(String),
+    }
+    pub struct EchoClient {
+        client_socket: tokio::net::TcpStream,
+    }
+
+    impl EchoClient {
+        pub async fn new<A: tokio::net::ToSocketAddrs>(addr: A) -> Result<Self, EchoClientError> {
+            Ok(Self {
+                client_socket: tokio::net::TcpStream::connect(addr).await?
+            })
+        }
+
+        pub async fn send_await(
+            &mut self, 
+            timeout: Option<std::time::Duration>, 
+            msg: &str
+        ) -> Result<(), EchoClientError> {
+            let (read, mut write) = self.client_socket.split();
+            let mut buf_reader = tokio::io::BufReader::new(read);
+
+            write.write_all(msg.as_bytes()).await?;
+            write.write_all(b"\n").await?;
+
+            let mut buf = String::new();
+
+            if let Some(timeout_duration) = timeout {
+                tokio::time::timeout(timeout_duration, buf_reader.read_line(&mut buf)).await??;
+            } else {
+                buf_reader.read_line(&mut buf).await?;
+            }
+
+            if msg != buf.trim_end() {
+                Err(EchoClientError::BadResponse(buf))
+            } else {
+                Ok(())
+            }
+        }
     }
 }
 
-// fn main() {
-//     let rt = tokio::runtime::Runtime::new().unwrap();
-//     rt.block_on(async {
-//         let echo_server = echo_server::EchoServer::bind("127.0.0.1:0").await.unwrap();
-//         let server_address = echo_server.get_local_address().unwrap();
-        
-//         let _echo_server_handle = echo_server.run().unwrap();
+#[tokio::test]
+async fn test_client_server_interaction() {
+    let server = echo_server::EchoServer::bind_any_local().await
+        .unwrap();
+    let server_address = server.get_local_address().unwrap();
+    let server_handler = server.run().unwrap();
 
-//         println!("Working...");
-//         tokio::time::sleep(Duration::from_secs(1)).await;
-        
-//         // echo_server_handle.shutdown().await.unwrap();
+    let mut client = echo_client::EchoClient::new(server_address).await.unwrap();
+    let message = "Hello world";
+    client.send_await(Some(Duration::from_millis(100)), message).await.unwrap();
 
-//         let mut client_socket = tokio::net::TcpStream::connect(server_address).await.unwrap();
-//         let (reader, mut writer) = client_socket.split();
+    server_handler.shutdown().await.unwrap();
+}
 
-//         let mut read_buffer = tokio::io::BufReader::new(reader);
-//         let request = "message\n";
-//         let mut response_buffer = String::new();
+#[tokio::test]
+async fn test_client_server_interaction_multiple_concurrent_clients() {
+    let server = echo_server::EchoServer::bind_any_local().await
+        .unwrap();
+    let server_address = server.get_local_address().unwrap();
+    let server_handler = server.run().unwrap();
 
-//         writer.write_all(request.as_bytes()).await.unwrap();
-//         writer.flush().await.unwrap();
+    let clients_count = 10;
+    let message = "Hello world";
+    for _ in 0..clients_count {
+        let _h = tokio::spawn(async move {
+            let mut client = echo_client::EchoClient::new(server_address).await.unwrap();
+            client.send_await(Some(Duration::from_millis(100)), message).await.unwrap();
+        });
+    }
 
-//         read_buffer.read_line(&mut response_buffer).await.unwrap();
-//         println!("Client got echo: '{response_buffer}'");
-//         writer.shutdown().await.unwrap();
+    server_handler.shutdown().await.unwrap();
+}
 
-//         assert_eq!(request, response_buffer.as_str());
-//     });
-// }
+#[tokio::test]
+async fn test_client_server_interaction_multiple_parallel_clients() {
+    let server = echo_server::EchoServer::bind_any_local().await
+        .unwrap();
+    let server_address = server.get_local_address().unwrap();
+    let server_handler = server.run().unwrap();
 
+    let clients_count = 20;
+    let message = "Hello world";
 
+    let mut results = vec![];
 
+    for _ in 0..clients_count {
+        let h = tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let mut client = echo_client::EchoClient::new(server_address).await.unwrap();
+                client.send_await(Some(Duration::from_millis(500)), message).await.unwrap();
+            })
+        });
+        results.push(h);
+    }
 
+    for thread_handler in results {
+        thread_handler.await.unwrap();
+    }
 
-
+    server_handler.shutdown().await.unwrap();
+}
