@@ -18,6 +18,18 @@ pub struct Rect2X<T> {
     pub size: Vector2X<T>,
 }
 
+impl<T: std::fmt::Display> std::fmt::Display for Vector2X<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{},{}]", self.x, self.y)
+    }
+}
+
+impl<T: std::fmt::Display> std::fmt::Display for Rect2X<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[({},{}), ({},{})]", self.pos.x, self.pos.y, self.size.x, self.size.y)
+    }
+}
+
 impl<T> Vector2X<T> 
 where 
     T: Default

@@ -1,5 +1,7 @@
 use std::{sync::{Arc, Mutex}, time::Duration};
 
+use tokio::io::AsyncBufReadExt;
+
 use crate::game::{common::Vector2F, world::World};
 
 #[derive(Debug, thiserror::Error)]
@@ -15,7 +17,8 @@ pub enum MultiplayerServerError {
 }
 
 pub struct MultiplayerServerHandler {
-    world: Arc<Mutex<World>>,
+    pub world: Arc<Mutex<World>>,
+    connection_task_handler: tokio::task::JoinHandle<()>,
     main_task_handler: tokio::task::JoinHandle<()>,
     shutdown_sender: tokio::sync::oneshot::Sender<()>,
 }
@@ -23,6 +26,11 @@ pub struct MultiplayerServerHandler {
 pub struct MultiplayerServer {
     listener: tokio::net::TcpListener,
 }
+
+// pub struct ClientConnection {
+//     socket: tokio::net::TcpStream,
+//     address: std::net::SocketAddr,
+// }
 
 impl MultiplayerServer {
     const MAIN_LOOP_INTERVAL: Duration = Duration::from_millis(250); // Slow for testing purpose
@@ -46,6 +54,55 @@ impl MultiplayerServer {
         let world_shared = world.clone();
 
         let (shutdown_sender, mut shutdown_receiver) = tokio::sync::oneshot::channel();
+        let (shutdown_server_sender, mut shutdown_server_receiver) = tokio::sync::oneshot::channel();
+
+        fn process_client_connection(connection: (tokio::net::TcpStream, std::net::SocketAddr)) {
+            let client_connection_task = tokio::spawn(async move {
+                let (mut socket, address) = connection;
+                println!("Processing client connection: {address:?}");
+
+                let (reader, mut writer) = socket.split();
+                let mut buf_reader = tokio::io::BufReader::new(reader);
+                let mut line_buff = String::new();
+
+                loop {
+                    match buf_reader.read_line(&mut line_buff).await {
+                        Ok(0) => {
+                            log::debug!("Client finished connection");
+                            break;
+                        },
+                        Ok(_) => {
+                            log::debug!("Client send line: '{}'", line_buff.trim());
+                        },
+                        Err(e) => {
+                            log::error!("Client faile reason = {e}, finished connection");
+                            break;
+                        }
+                    }
+                }
+
+                log::debug!("Client disconnected");
+            });
+        }
+
+        let connection_task_handler = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut shutdown_server_receiver => {
+                        log::debug!("Received server shut down signal...");
+                        break;
+                    },
+                    incomming_connection = self.listener.accept() => {
+                        if let Ok(connection) = incomming_connection {
+                            process_client_connection(connection);
+                        }
+                    },
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                        log::trace!("Dummy sleep, to remove...");
+                    },
+                }
+            }
+        });
 
         let main_task_handler = tokio::spawn(async move {
             loop {
@@ -53,7 +110,12 @@ impl MultiplayerServer {
                 tokio::select! {
                     _ = &mut shutdown_receiver => {
                         // Received shutdown signal
-                        println!("Received shut down signal...");
+                        log::debug!("Received shut down signal...");
+
+                        if shutdown_server_sender.send(()).is_err() {
+                            log::error!("Could not emit signal to stop server!");
+                        }
+
                         break;
                     },
                     _ = tokio::time::sleep(Self::MAIN_LOOP_INTERVAL) => {
@@ -68,6 +130,7 @@ impl MultiplayerServer {
 
         Ok(MultiplayerServerHandler {
             world,
+            connection_task_handler,
             main_task_handler,
             shutdown_sender,
         })
@@ -76,10 +139,11 @@ impl MultiplayerServer {
 
 impl MultiplayerServerHandler {
     pub async fn shutdown(self) -> Result<(), MultiplayerServerError> {
-        println!("Gracefully shutting down server...");
+        log::debug!("Gracefully shutting down server...");
         self.shutdown_sender.send(()).map_err(|_| MultiplayerServerError::ShutdownError)?;
         self.main_task_handler.await?;
-        println!("Server shut down successfully!");
+        self.connection_task_handler.await?;
+        log::debug!("Server shut down successfully!");
         Ok(())
     }
 }
@@ -105,6 +169,6 @@ async fn test_server_adding_entities() {
         // world.create_entity_npc("Starlette", Vector2F::new(-2.5, 0.0));
     }
 
-    tokio::time::sleep(Duration::from_millis(30000)).await;
+    tokio::time::sleep(Duration::from_millis(11000)).await;
     server_handler.shutdown().await.unwrap();
 }

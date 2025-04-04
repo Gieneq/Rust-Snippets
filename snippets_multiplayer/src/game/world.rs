@@ -5,7 +5,6 @@ use rand::seq::IndexedRandom;
 pub struct World {
     new_entity_id: EntityId,
     entities: Vec<Entity>,
-    tile_size: f32,
 }
 
 #[derive(Debug, PartialEq)]
@@ -56,18 +55,29 @@ const NPC_MOVEMENT_SPEED: f32 = 0.35;
 const NPC_DIRECTION_SELECTION_TICKS: u32 = 3;
 
 impl World {
+    pub const TILE_SIZE_SIDE: f32 = 5.0;
+
+    pub fn get_grid_aligned_position(pos: &Vector2F) -> Vector2F {
+        fn align_coord(coord: f32) -> f32 {
+            (coord / World::TILE_SIZE_SIDE).floor() * World::TILE_SIZE_SIDE
+        }
+
+        Vector2F::new(  
+            align_coord(pos.x),
+            align_coord(pos.y)
+        )
+    }
+
     pub fn new() -> Self {
-        const TILE_SIZE_SIDE: f32 = 5.0;
-        println!("World created");
+        log::info!("World created");
         Self {
             new_entity_id: 0,
             entities: vec![],
-            tile_size: TILE_SIZE_SIDE,
         }
     }
 
-    // TODO snap to grid
     pub fn create_entity_npc<S: AsRef<str>>(&mut self, name: S, intial_position: Vector2F) -> EntityId {
+        let intial_position = Self::get_grid_aligned_position(&intial_position);
         self.create_entity(
             name, 
             intial_position, 
@@ -82,8 +92,8 @@ impl World {
         )
     }
 
-    // TODO snap to grid
     pub fn create_entity<S: AsRef<str>>(&mut self, name: S, intial_position: Vector2F, stats: EntityStats, controller: EntityController) -> EntityId {
+        let intial_position = Self::get_grid_aligned_position(&intial_position);
         let new_id = self.new_entity_id;
         self.new_entity_id += 1;
 
@@ -109,7 +119,7 @@ impl World {
     }
 
     pub fn is_tile_occupied(&self, tile_position: &Vector2F) -> bool {
-        let checked_tile = Rect2F::new(tile_position.x, tile_position.y, self.tile_size, self.tile_size);
+        let checked_tile = Rect2F::new(tile_position.x, tile_position.y, Self::TILE_SIZE_SIDE, Self::TILE_SIZE_SIDE);
         for entity in self.entities.iter() {
             let is_colliding = match entity.state {
                 EntityState::Idle => checked_tile.contains(&entity.position),
@@ -126,7 +136,7 @@ impl World {
     }
 
     pub fn tick(&mut self) {
-        println!("World tick");
+        log::trace!("World tick");
 
         // TODO Do it better
         let occupied_positions: Vec<_> = self
@@ -139,7 +149,7 @@ impl World {
         .collect();
 
         self.entities.iter_mut().for_each(|e| {
-            println!(" - {e:?}");
+            log::trace!(" - {e:?}");
 
             if let EntityState::Moving { from_position, destination } = e.state {
                 // Interpolate movement
@@ -147,14 +157,15 @@ impl World {
                 let direction = (destination - from_position).normal();
                 let previous_location_to_destination = destination - e.position;
                 e.position += direction * e.stats.movement_speed;
-                let new_location_to_destination = destination - e.position;                
+                log::debug!("   {} moving, now in {}", e.name, e.position);    
+                let new_location_to_destination = destination - e.position;            
 
                 // Check if destination was reached, by checking change of dot product
                 let destination_was_reached = previous_location_to_destination.dot(new_location_to_destination) < 0.0;
 
                 // Align to destination, Change state to Idle and reset counter
                 if destination_was_reached {
-                    println!("   {} reached destination {:?}", e.name, destination);
+                    log::info!("   {} reached destination {} go IDLE", e.name, destination);
                     e.state = EntityState::Idle;
                     if let EntityController::Npc(npc_controller) = &mut e.controller {
                         npc_controller.change_destination_counter = NPC_DIRECTION_SELECTION_TICKS;
@@ -174,6 +185,7 @@ impl World {
                         if e.state == EntityState::Idle {
                             // Count down, at counting exhaustion try selecting new destination
                             if npc_controller.change_destination_counter > 0 {
+                                log::debug!("   {} counting in IDLE {}...", e.name, npc_controller.change_destination_counter);
                                 npc_controller.change_destination_counter -= 1;
                             } else {
                                 // Triggered -> try selecting new destination
@@ -186,16 +198,18 @@ impl World {
 
                                 let random_direction = directions.choose(&mut rand::rng()).unwrap();
 
-                                let destination_position = e.position + (*random_direction * self.tile_size);
+                                let destination_position = e.position + (*random_direction * Self::TILE_SIZE_SIDE);
 
                                 if !occupied_positions.contains(&destination_position) {
-                                    println!("   Setting new destination {destination_position:?}!");
+                                    log::info!("   {} Setting new destination from {} -to-> {} go MOVING!", 
+                                        e.name, e.position, destination_position
+                                    );
                                     e.state = EntityState::Moving {
                                         from_position: e.position,
                                         destination: destination_position
                                     };
                                 } else {
-                                    println!("   Tile {destination_position:?} already occupied!");
+                                    log::info!("   Tile {destination_position} already occupied!");
                                 }
                             }
                         }
@@ -252,4 +266,28 @@ fn test_world_entity_translate() {
     let entity = world.get_entity_by_id_mut(new_entity_id).unwrap();
     entity.position += translation;
     assert_eq!(entity.position, entity_initial_position + translation);
+}
+
+#[test]
+fn test_coords_positive_alignment() {
+    let x_tiles_count: f32 = 0.0;
+    let y_tiles_count: f32 = 2.0;
+
+    let v1 = Vector2F::new((x_tiles_count + 0.1) * World::TILE_SIZE_SIDE, (y_tiles_count + 0.7) * World::TILE_SIZE_SIDE);
+    let v2 = World::get_grid_aligned_position(&v1);
+    let v2_expected = Vector2F::new(x_tiles_count * World::TILE_SIZE_SIDE, y_tiles_count * World::TILE_SIZE_SIDE);
+
+    assert_eq!(v2, v2_expected, "v1={v1:?}");
+}
+
+#[test]
+fn test_coords_negative_alignment() {
+    let x_tiles_count: f32 = 0.0;
+    let y_tiles_count: f32 = -3.0;
+
+    let v1 = Vector2F::new((x_tiles_count - 0.1) * World::TILE_SIZE_SIDE, (y_tiles_count - 0.7) * World::TILE_SIZE_SIDE);
+    let v2 = World::get_grid_aligned_position(&v1);
+    let v2_expected = Vector2F::new((x_tiles_count - 1.0) * World::TILE_SIZE_SIDE, (y_tiles_count - 1.0) * World::TILE_SIZE_SIDE);
+
+    assert_eq!(v2, v2_expected, "v1={v1:?}");
 }
