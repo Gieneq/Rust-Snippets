@@ -2,6 +2,11 @@ use super::common::{Rect2F, Rect2X, Vector2F};
 use rand::seq::IndexedRandom;
 
 #[derive(Debug)]
+pub enum WorldError {
+    EntityNotExist,
+}
+
+#[derive(Debug)]
 pub struct World {
     new_entity_id: EntityId,
     entities: Vec<Entity>,
@@ -25,6 +30,7 @@ pub struct NpcController {
 
 #[derive(Debug)]
 pub struct PlayerController {
+    dummy: u8,
 }
 
 #[derive(Debug)]
@@ -76,6 +82,20 @@ impl World {
         }
     }
 
+    pub fn create_entity_player<S: AsRef<str>>(&mut self, name: S, intial_position: Vector2F) -> EntityId {
+        let intial_position = Self::get_grid_aligned_position(&intial_position);
+        self.create_entity(
+            name, 
+            intial_position, 
+            EntityStats {
+                movement_speed: PLAYER_MOVEMENT_SPEED
+            }, 
+            EntityController::Player(PlayerController {
+                dummy: 123
+            })
+        )
+    }
+
     pub fn create_entity_npc<S: AsRef<str>>(&mut self, name: S, intial_position: Vector2F) -> EntityId {
         let intial_position = Self::get_grid_aligned_position(&intial_position);
         self.create_entity(
@@ -108,6 +128,14 @@ impl World {
 
         self.entities.push(entity);
         new_id
+    }
+
+    pub fn remove_entity(&mut self, entity_id: EntityId) -> Result<(), WorldError> {
+        let position = self.entities.iter()
+            .position(|e| e.id == entity_id)
+            .ok_or(WorldError::EntityNotExist)?;
+        let _ = self.entities.remove(position);
+        Ok(())
     }
 
     pub fn get_entity_by_id(&self, entity_id: EntityId) -> Option<&Entity> {
@@ -217,7 +245,7 @@ impl World {
                     }
                 },
                 EntityController::Player(_player_controller) => {
-                    unimplemented!("Player controller usage in tick missing")
+                    log::trace!("Player controller usage in tick missing")
                 },
             }
         });

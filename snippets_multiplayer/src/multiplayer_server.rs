@@ -1,8 +1,15 @@
-use std::{sync::{Arc, Mutex}, time::Duration};
+use std::{
+    sync::{
+        Arc, 
+        Mutex
+    },
+    time::Duration
+};
 
-use tokio::io::AsyncBufReadExt;
-
-use crate::game::{common::Vector2F, world::World};
+use crate::{
+    game::world::World, 
+    multiplayer_client::ClientSession
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum MultiplayerServerError {
@@ -27,11 +34,6 @@ pub struct MultiplayerServer {
     listener: tokio::net::TcpListener,
 }
 
-// pub struct ClientConnection {
-//     socket: tokio::net::TcpStream,
-//     address: std::net::SocketAddr,
-// }
-
 impl MultiplayerServer {
     const MAIN_LOOP_INTERVAL: Duration = Duration::from_millis(250); // Slow for testing purpose
 
@@ -51,39 +53,11 @@ impl MultiplayerServer {
 
     pub async fn run(self) -> Result<MultiplayerServerHandler, MultiplayerServerError> {
         let world = Arc::new(Mutex::new(World::new()));
+        let world_shared_clients = world.clone();
         let world_shared = world.clone();
 
         let (shutdown_sender, mut shutdown_receiver) = tokio::sync::oneshot::channel();
         let (shutdown_server_sender, mut shutdown_server_receiver) = tokio::sync::oneshot::channel();
-
-        fn process_client_connection(connection: (tokio::net::TcpStream, std::net::SocketAddr)) {
-            let client_connection_task = tokio::spawn(async move {
-                let (mut socket, address) = connection;
-                println!("Processing client connection: {address:?}");
-
-                let (reader, mut writer) = socket.split();
-                let mut buf_reader = tokio::io::BufReader::new(reader);
-                let mut line_buff = String::new();
-
-                loop {
-                    match buf_reader.read_line(&mut line_buff).await {
-                        Ok(0) => {
-                            log::debug!("Client finished connection");
-                            break;
-                        },
-                        Ok(_) => {
-                            log::debug!("Client send line: '{}'", line_buff.trim());
-                        },
-                        Err(e) => {
-                            log::error!("Client faile reason = {e}, finished connection");
-                            break;
-                        }
-                    }
-                }
-
-                log::debug!("Client disconnected");
-            });
-        }
 
         let connection_task_handler = tokio::spawn(async move {
             loop {
@@ -94,7 +68,9 @@ impl MultiplayerServer {
                     },
                     incomming_connection = self.listener.accept() => {
                         if let Ok(connection) = incomming_connection {
-                            process_client_connection(connection);
+                            let client_session = ClientSession::new(connection);
+                             //TODO consider storing handler.await.unwrap();
+                            client_session.run(world_shared_clients.clone()).unwrap()
                         }
                     },
                     _ = tokio::time::sleep(Duration::from_secs(1)) => {
