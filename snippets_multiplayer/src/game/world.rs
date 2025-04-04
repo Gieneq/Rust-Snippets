@@ -48,7 +48,7 @@ pub struct EntityStats {
 
 #[derive(Debug)]
 pub struct Entity {
-    id: u32,
+    pub id: u32,
     pub name: String,
     pub position: Vector2F,
     state: EntityState,
@@ -249,6 +249,17 @@ impl World {
                 },
             }
         });
+    }
+    
+    pub fn iter_entities(&self) -> impl Iterator<Item = &Entity> {
+        self.entities.iter()
+    }
+
+}
+
+impl Entity {
+    pub fn is_player(&self) -> bool {
+        matches!(self.controller, EntityController::Player(_))
     }
 }
 

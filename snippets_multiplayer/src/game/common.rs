@@ -1,8 +1,10 @@
+use serde::{Deserialize, Serialize};
+
 pub type Vector2F = Vector2X<f32>;
 pub type Vector2U = Vector2X<u32>;
 pub type Vector2I = Vector2X<i32>;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Vector2X<T> {
     pub x: T,
     pub y: T,
@@ -12,7 +14,7 @@ pub type Rect2F = Rect2X<f32>;
 pub type Rect2U = Rect2X<u32>;
 pub type Rect2I = Rect2X<i32>;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Rect2X<T> {
     pub pos: Vector2X<T>,
     pub size: Vector2X<T>,

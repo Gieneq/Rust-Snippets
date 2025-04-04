@@ -39,8 +39,9 @@ impl ClientSession {
         player_id
     }
 
+    /// Line is trimmed already
     fn on_client_request(player_id: EntityId, request: &str, world: Arc<Mutex<World>>) -> String {
-        format!("Ok player_id={player_id} to '{request}'")
+        crate::client_requests::route_request(player_id, request, world)
     }
 
     fn on_client_disconnect(player_id: EntityId, world: Arc<Mutex<World>>) {
@@ -71,11 +72,12 @@ impl ClientSession {
                     break;
                 },
                 Ok(_) => {
-                    log::debug!("Client send line: '{}'", line_buff.trim());
+                    let line = line_buff.trim();
+                    log::debug!("Client send line: '{}'", line);
 
                     let mut response = Self::on_client_request(
                         player_entity_id, 
-                        &line_buff, 
+                        line, 
                         cloned_world
                     );
                     log::debug!("Response with: '{}'", response);
@@ -95,6 +97,7 @@ impl ClientSession {
                     break;
                 }
             }
+            line_buff.clear();
         }
 
         log::debug!("Client disconnected");
