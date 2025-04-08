@@ -1,6 +1,14 @@
-use snippets_multiplayer::{game::common::Vector2F, rendering::{renderer::State, EntityView}};
+use snippets_multiplayer::{
+    client_requests::ClientResponse, 
+    game::common::Vector2F, 
+    rendering::{
+        renderer::State, 
+        EntityView
+    }, TEST_SERVER_ADRESS
+};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
-use std::sync::{Arc, Mutex};
+use std::{sync::{Arc, Mutex}, time::Duration};
 
 use winit::{
     application::ApplicationHandler,
@@ -55,18 +63,130 @@ impl ApplicationHandler for App {
                 // Reconfigures the size of the surface. We do not re-render
                 // here as this event is always followed up by redraw request.
                 state.resize(size);
-            }
+            },
+            WindowEvent::MouseWheel { 
+                device_id: _, 
+                delta, 
+                phase: _ 
+            } => {
+                let scroll_sentivity: f32 = 0.1;
+                match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => {
+                        // y is +-1
+                        self.scale *= (1.0 + scroll_sentivity).powf(y);
+                    },
+                    winit::event::MouseScrollDelta::PixelDelta(_physical_position) => todo!(),
+                }
+            },
             _ => (),
         }
     }
 }
 
-fn main() {
+struct GuiClient {
+    socket: tokio::net::TcpStream
+}
+
+struct GuiClientHandle {
+    task_handle: tokio::task::JoinHandle<()>,
+    entities: Arc<Mutex<Vec<EntityView>>>,
+}
+
+async fn client_do_request_await_response(
+    req: &str,
+    buf_reader: &mut tokio::io::BufReader<tokio::net::tcp::ReadHalf<'_>>,
+    write: &mut tokio::net::tcp::WriteHalf<'_>,
+) -> String {
+    let mut buf_string = String::new();
+
+    write.write_all(req.as_bytes()).await.unwrap();
+    write.write_all(b"\n").await.unwrap();
+    write.flush().await.unwrap();
+
+    buf_reader.read_line(&mut buf_string).await.unwrap();
+    buf_string.trim().to_string()
+}
+
+impl GuiClient {
+    async fn connect<A: tokio::net::ToSocketAddrs + std::fmt::Debug>(addr: A) -> GuiClient {
+        log::info!("Client attempts to connect to server {addr:?}...");
+
+        let socket = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let client_address = socket.local_addr().unwrap();
+        log::info!("Client {client_address} connected!");
+        GuiClient {
+            socket
+        }
+    }
+
+    async fn run(mut self, shared_entities: Arc<Mutex<Vec<EntityView>>>) -> GuiClientHandle {
+        let shared_entities_cloned = shared_entities.clone();
+
+        let task_handle = tokio::task::spawn(async move {
+            let (read_half, mut write_half) = self.socket.split();
+            let mut buf_reader = tokio::io::BufReader::new(read_half);
+
+            loop {
+                let response = client_do_request_await_response(
+                    "{\"type\":\"WorldCheck\"}",
+                    &mut buf_reader,
+                    &mut write_half
+                ).await;
+                log::trace!("Client got response '{response}'.");
+
+                match serde_json::from_str(&response).unwrap() {
+                    ClientResponse::WorldCheck { entities } => {
+                        // Update shared data
+                        if let Ok(mut entities_guard) = shared_entities.lock() {
+                            entities_guard.clear();
+                            for entiy in entities {
+                                let color = if entiy.is_npc {
+                                    [0.2, 0.2, 0.2]
+                                } else {
+                                    [0.3, 0.3, 0.3]
+                                };
+
+                                entities_guard.push(EntityView { 
+                                    position: entiy.position, 
+                                    size: entiy.size, 
+                                    color
+                                });
+                                
+                            }
+                        }
+                    },
+                    _ => {},
+                }
+
+                tokio::time::sleep(Duration::from_millis(32)).await;
+            }
+
+        });
+
+        GuiClientHandle {
+            task_handle,
+            entities: shared_entities_cloned
+        }
+    }
+}
+
+impl GuiClientHandle {
+    async fn wait_until_finished(self) -> Result<(), tokio::task::JoinError> {
+        self.task_handle.await
+    }
+}
+
+#[tokio::main]
+async fn main() {
     // wgpu uses `log` for all of our logging, so we initialize a logger with the `env_logger` crate.
-    //
-    // To change the log level, set the `RUST_LOG` environment variable. See the `env_logger`
-    // documentation for more information.
-    env_logger::init();
+    
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Warn)
+        .format_timestamp_millis()
+        .format_file(false)
+        .format_line_number(true)
+        .init();
+
 
     let event_loop = EventLoop::new().unwrap();
 
@@ -83,23 +203,14 @@ fn main() {
     // event_loop.set_control_flow(ControlFlow::Wait);
 
     let mut app = App {
-        scale: 1.0,
-        
-        // for test purpose
-        entities: Arc::new(Mutex::new(vec![
-            EntityView {
-                position: Vector2F::new(0.0, 0.0), 
-                size: Vector2F::new(0.2, 0.2), 
-                color: [0.2, 0.2, 0.2] 
-            },
-            EntityView {
-                position: Vector2F::new(-0.5, 0.0), 
-                size: Vector2F::new(0.3, 0.3), 
-                color: [0.3, 0.3, 0.3] 
-            },
-        ])),
+        scale: 0.05,
         ..Default::default()
     };
+    
+    let client_handler = GuiClient::connect(TEST_SERVER_ADRESS).await
+        .run(app.entities.clone()).await;
 
     event_loop.run_app(&mut app).unwrap();
+
+    client_handler.wait_until_finished().await.unwrap();
 }

@@ -20,9 +20,11 @@ pub enum ClientRequest {
 
 #[derive(Serialize, Deserialize)]
 pub struct EntityCheckData {
-    position: Vector2F,
-    id: EntityId,
-    name: String,
+    pub position: Vector2F,
+    pub size: Vector2F,
+    pub id: EntityId,
+    pub name: String,
+    pub is_npc: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -53,7 +55,9 @@ impl EntityCheckData {
             EntityCheckData {
                 name: e.name.clone(),
                 id: e.id,
-                position: e.position
+                position: e.position,
+                is_npc: !e.is_player(),
+                size: e.size
             }
         })
         .collect()

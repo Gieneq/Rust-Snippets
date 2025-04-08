@@ -29,6 +29,7 @@ impl ClientSession {
                 world_guard.create_entity_player(
                     "Player", 
                     Vector2F::new(0.0, 0.0),
+                    Vector2F::new(4.8, 4.8)
                 )
             },
             Err(e) => {

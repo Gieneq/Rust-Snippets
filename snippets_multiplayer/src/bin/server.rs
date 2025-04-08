@@ -2,7 +2,7 @@ use snippets_multiplayer::{game::common::Vector2F, multiplayer_server::Multiplay
 
 fn main() {
     env_logger::builder()
-        .filter_level(log::LevelFilter::Debug)
+        .filter_level(log::LevelFilter::Warn)
         .format_timestamp_millis()
         .format_file(false)
         .format_line_number(true)
@@ -17,8 +17,9 @@ fn main() {
     
         {
             let mut world = server_handler.world.lock().unwrap();
-            world.create_entity_npc("Tuna", Vector2F::new(10.5, 20.3));
-            // world.create_entity_npc("Starlette", Vector2F::new(-2.5, 0.0));
+            world.create_entity_npc("Tuna", Vector2F::new(5.0, 10.0), Vector2F::new(4.8, 4.8));
+            world.create_entity_npc("Starlette", Vector2F::new(-5.0, 0.0), Vector2F::new(4.8, 4.8));
+            world.create_entity_npc("Bucket", Vector2F::new(5.0, -5.0), Vector2F::new(4.8, 4.8));
         }
 
         let (ctrlc_sender, ctrlc_receiver) = tokio::sync::oneshot::channel();

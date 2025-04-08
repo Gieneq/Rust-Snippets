@@ -51,14 +51,15 @@ pub struct Entity {
     pub id: u32,
     pub name: String,
     pub position: Vector2F,
+    pub size: Vector2F,
     state: EntityState,
     stats: EntityStats,
     controller: EntityController,
 }
 
-const PLAYER_MOVEMENT_SPEED: f32 = 0.5;
-const NPC_MOVEMENT_SPEED: f32 = 0.35;
-const NPC_DIRECTION_SELECTION_TICKS: u32 = 3;
+const PLAYER_MOVEMENT_SPEED: f32 = 0.5 / 2.0;
+const NPC_MOVEMENT_SPEED: f32 = 0.35 / 2.0;
+const NPC_DIRECTION_SELECTION_TICKS: u32 = 3 * 15;
 
 impl World {
     pub const TILE_SIZE_SIDE: f32 = 5.0;
@@ -82,11 +83,12 @@ impl World {
         }
     }
 
-    pub fn create_entity_player<S: AsRef<str>>(&mut self, name: S, intial_position: Vector2F) -> EntityId {
+    pub fn create_entity_player<S: AsRef<str>>(&mut self, name: S, intial_position: Vector2F, size: Vector2F) -> EntityId {
         let intial_position = Self::get_grid_aligned_position(&intial_position);
         self.create_entity(
             name, 
             intial_position, 
+            size,
             EntityStats {
                 movement_speed: PLAYER_MOVEMENT_SPEED
             }, 
@@ -96,23 +98,24 @@ impl World {
         )
     }
 
-    pub fn create_entity_npc<S: AsRef<str>>(&mut self, name: S, intial_position: Vector2F) -> EntityId {
+    pub fn create_entity_npc<S: AsRef<str>>(&mut self, name: S, intial_position: Vector2F, size: Vector2F) -> EntityId {
         let intial_position = Self::get_grid_aligned_position(&intial_position);
         self.create_entity(
             name, 
             intial_position, 
+            size,
             EntityStats {
                 movement_speed: NPC_MOVEMENT_SPEED
             }, 
             EntityController::Npc(NpcController {
                 spawnpoint: intial_position,
                 roaming_range: Some(3.0),
-                change_destination_counter: NPC_DIRECTION_SELECTION_TICKS
+                change_destination_counter: rand::random_range(0..NPC_DIRECTION_SELECTION_TICKS)
             })
         )
     }
 
-    pub fn create_entity<S: AsRef<str>>(&mut self, name: S, intial_position: Vector2F, stats: EntityStats, controller: EntityController) -> EntityId {
+    pub fn create_entity<S: AsRef<str>>(&mut self, name: S, intial_position: Vector2F, size: Vector2F, stats: EntityStats, controller: EntityController) -> EntityId {
         let intial_position = Self::get_grid_aligned_position(&intial_position);
         let new_id = self.new_entity_id;
         self.new_entity_id += 1;
@@ -121,6 +124,7 @@ impl World {
             id: new_id, 
             name: name.as_ref().to_string(),
             position: intial_position,
+            size,
             state: EntityState::Idle,
             stats,
             controller
@@ -274,7 +278,7 @@ fn test_world_entity_creation_should_increase_entities_count() {
     let mut world = World::new();
     assert_eq!(world.new_entity_id, 0);
 
-    let new_entity_id = world.create_entity_npc("Bob", Vector2F::new(1.0, 2.0));
+    let new_entity_id = world.create_entity_npc("Bob", Vector2F::new(1.0, 2.0), Vector2F::new(1.0, 1.0));
     assert_eq!(new_entity_id, 0);
 
     assert_eq!(world.new_entity_id, 1);
@@ -286,7 +290,7 @@ fn test_world_entity_access() {
     let entity_position = Vector2F::new(1.0, 2.0);
 
     let mut world = World::new();
-    let new_entity_id = world.create_entity_npc(entity_name, entity_position);
+    let new_entity_id = world.create_entity_npc(entity_name, entity_position, Vector2F::new(1.0, 1.0));
 
     let entity = world.get_entity_by_id(new_entity_id).unwrap();
     assert_eq!(entity.name, entity_name);
@@ -300,7 +304,7 @@ fn test_world_entity_translate() {
     let translation = Vector2F::new(100.0, 500.0);
 
     let mut world = World::new();
-    let new_entity_id = world.create_entity_npc("Bob", entity_initial_position);
+    let new_entity_id = world.create_entity_npc("Bob", entity_initial_position, Vector2F::new(1.0, 1.0));
 
     let entity = world.get_entity_by_id_mut(new_entity_id).unwrap();
     entity.position += translation;

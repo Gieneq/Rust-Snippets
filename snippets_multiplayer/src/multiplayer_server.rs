@@ -35,7 +35,8 @@ pub struct MultiplayerServer {
 }
 
 impl MultiplayerServer {
-    const MAIN_LOOP_INTERVAL: Duration = Duration::from_millis(250); // Slow for testing purpose
+    // const MAIN_LOOP_INTERVAL: Duration = Duration::from_millis(250); // Slow for testing purpose
+    const MAIN_LOOP_INTERVAL: Duration = Duration::from_millis(32);
 
     pub async fn bind_any_local() -> Result<Self, MultiplayerServerError> {
         Self::bind("127.0.0.1:0").await
@@ -141,7 +142,7 @@ async fn test_server_adding_entities() {
 
     {
         let mut world = server_handler.world.lock().unwrap();
-        world.create_entity_npc("Tuna", Vector2F::new(10.5, 20.3));
+        world.create_entity_npc("Tuna", Vector2F::new(10.5, 20.3), Vector2F::new(1.0, 1.0));
         // world.create_entity_npc("Starlette", Vector2F::new(-2.5, 0.0));
     }
 
