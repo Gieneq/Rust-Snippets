@@ -1,5 +1,5 @@
 use snippets_multiplayer::{
-    client_requests::ClientResponse, 
+    client_requests::{ClientRequest, ClientResponse, MoveDirection}, 
     game::common::Vector2F, 
     rendering::{
         renderer::State, 
@@ -7,28 +7,27 @@ use snippets_multiplayer::{
     }, TEST_SERVER_ADRESS
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use wgpu::naga::proc::NameKey;
 
 use std::{sync::{Arc, Mutex}, time::Duration};
 
 use winit::{
-    application::ApplicationHandler,
-    event::WindowEvent,
-    event_loop::{
+    application::ApplicationHandler, event::{ElementState, WindowEvent}, event_loop::{
         ActiveEventLoop, 
         ControlFlow, 
         EventLoop
-    },
-    window::{
+    }, keyboard::Key, window::{
         Window, 
         WindowId
-    },
+    }
 };
 
 #[derive(Default)]
 struct App {
     state: Option<State>,
     entities: Arc<Mutex<Vec<EntityView>>>,
-    scale: f32
+    scale: f32,
+    client_handler: Option<GuiClientHandle>,
 }
 
 impl ApplicationHandler for App {
@@ -53,6 +52,11 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => {
                 println!("The close button was pressed; stopping");
                 event_loop.exit();
+
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async move {
+                    self.client_handler.take().unwrap().wait_until_finished().await.unwrap();
+                });
             }
             WindowEvent::RedrawRequested => {
                 state.render(entities, self.scale);
@@ -78,6 +82,25 @@ impl ApplicationHandler for App {
                     winit::event::MouseScrollDelta::PixelDelta(_physical_position) => todo!(),
                 }
             },
+            WindowEvent::KeyboardInput { device_id: _, event, is_synthetic: _ } => {
+                if event.state == ElementState::Released {
+                    match event.logical_key {
+                        Key::Named(winit::keyboard::NamedKey::ArrowUp) => {
+                            self.client_handler.as_ref().unwrap().move_headless(MoveDirection::Up);
+                        },
+                        Key::Named(winit::keyboard::NamedKey::ArrowRight) => {
+                            self.client_handler.as_ref().unwrap().move_headless(MoveDirection::Right);
+                        },
+                        Key::Named(winit::keyboard::NamedKey::ArrowDown) => {
+                            self.client_handler.as_ref().unwrap().move_headless(MoveDirection::Down);
+                        },
+                        Key::Named(winit::keyboard::NamedKey::ArrowLeft) => {
+                            self.client_handler.as_ref().unwrap().move_headless(MoveDirection::Left);
+                        },
+                        _ => {}
+                    }
+                }    
+            }
             _ => (),
         }
     }
@@ -90,6 +113,7 @@ struct GuiClient {
 struct GuiClientHandle {
     task_handle: tokio::task::JoinHandle<()>,
     entities: Arc<Mutex<Vec<EntityView>>>,
+    contol_signals_tx: std::sync::mpsc::Sender<MoveDirection>
 }
 
 async fn client_do_request_await_response(
@@ -122,6 +146,8 @@ impl GuiClient {
     async fn run(mut self, shared_entities: Arc<Mutex<Vec<EntityView>>>) -> GuiClientHandle {
         let shared_entities_cloned = shared_entities.clone();
 
+        let (contol_signals_tx, contol_signals_rx) = std::sync::mpsc::channel();
+
         let task_handle = tokio::task::spawn(async move {
             let (read_half, mut write_half) = self.socket.split();
             let mut buf_reader = tokio::io::BufReader::new(read_half);
@@ -134,29 +160,38 @@ impl GuiClient {
                 ).await;
                 log::trace!("Client got response '{response}'.");
 
-                match serde_json::from_str(&response).unwrap() {
-                    ClientResponse::WorldCheck { entities } => {
-                        // Update shared data
-                        if let Ok(mut entities_guard) = shared_entities.lock() {
-                            entities_guard.clear();
-                            for entiy in entities {
-                                let color = if entiy.is_npc {
-                                    [0.2, 0.2, 0.2]
-                                } else {
-                                    [0.3, 0.3, 0.3]
-                                };
+                if let ClientResponse::WorldCheck { entities } = serde_json::from_str(&response).unwrap() {
+                    // Update shared data
+                    if let Ok(mut entities_guard) = shared_entities.lock() {
+                        entities_guard.clear();
+                        for entiy in entities {
+                            let color = if entiy.is_npc {
+                                [0.2, 0.2, 0.2]
+                            } else {
+                                [0.3, 0.3, 0.3]
+                            };
 
-                                entities_guard.push(EntityView { 
-                                    position: entiy.position, 
-                                    size: entiy.size, 
-                                    color
-                                });
-                                
-                            }
+                            entities_guard.push(EntityView { 
+                                position: entiy.position, 
+                                size: entiy.size, 
+                                color
+                            });
+                            
                         }
-                    },
-                    _ => {},
+                    }
                 }
+
+                // Poll for control signals
+                if let Ok(move_dir) = contol_signals_rx.try_recv() {
+                    let request = serde_json::to_string(&ClientRequest::Move{dir: move_dir}).unwrap();
+                    let response = client_do_request_await_response(
+                        &request,
+                        &mut buf_reader,
+                        &mut write_half
+                    ).await;
+                    log::debug!("Client got response '{response}'.");
+                }
+                
 
                 tokio::time::sleep(Duration::from_millis(32)).await;
             }
@@ -165,7 +200,8 @@ impl GuiClient {
 
         GuiClientHandle {
             task_handle,
-            entities: shared_entities_cloned
+            entities: shared_entities_cloned,
+            contol_signals_tx
         }
     }
 }
@@ -173,6 +209,10 @@ impl GuiClient {
 impl GuiClientHandle {
     async fn wait_until_finished(self) -> Result<(), tokio::task::JoinError> {
         self.task_handle.await
+    }
+
+    fn move_headless(&self, direction: MoveDirection) {
+        self.contol_signals_tx.send(direction).unwrap();
     }
 }
 
@@ -209,8 +249,9 @@ async fn main() {
     
     let client_handler = GuiClient::connect(TEST_SERVER_ADRESS).await
         .run(app.entities.clone()).await;
+    app.client_handler = Some(client_handler);
 
     event_loop.run_app(&mut app).unwrap();
 
-    client_handler.wait_until_finished().await.unwrap();
+    // client_handler.clone().wait_until_finished().await.unwrap();
 }

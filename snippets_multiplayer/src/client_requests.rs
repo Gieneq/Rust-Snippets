@@ -11,11 +11,22 @@ use crate::game::{
 };
 
 #[derive(Serialize, Deserialize)]
+pub enum MoveDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+#[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ClientRequest {
     GetId,
     WorldCheck,
     Healthcheck,
+    Move {
+        dir: MoveDirection
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -44,6 +55,9 @@ pub enum ClientResponse {
     },
     OtherError {
         err: String
+    },
+    Move {
+        started: bool
     },
 }
 
@@ -83,7 +97,6 @@ pub fn route_request(player_id: EntityId, request_str: &str, world: Arc<Mutex<Wo
                 }
             },
             ClientRequest::Healthcheck => {
-                
                 match world.lock() {
                     Ok(world_guard) => {
                         let players_count = world_guard.iter_entities().filter(|e| e.is_player()).count();
@@ -94,6 +107,34 @@ pub fn route_request(player_id: EntityId, request_str: &str, world: Arc<Mutex<Wo
                     }
                 }
             },
+            ClientRequest::Move{dir} => {
+                let was_moved = match world.lock() {
+                    Ok(mut world_guard) => {
+                        let player_pos = world_guard.get_entity_by_id(player_id).unwrap().position;
+                        let next_player_pos = player_pos + match dir {
+                            MoveDirection::Up => Vector2F::new(0.0, 1.0),
+                            MoveDirection::Down => Vector2F::new(0.0, -1.0),
+                            MoveDirection::Left => Vector2F::new(-1.0, 0.0),
+                            MoveDirection::Right => Vector2F::new(1.0, 0.0),
+                        } * 5.0;
+                        
+                        if world_guard.is_tile_occupied(&next_player_pos) {
+                            false
+                        } else {
+                            // TODO aniamte
+                            let player = world_guard.get_entity_by_id_mut(player_id).unwrap();
+                            player.position = next_player_pos;
+                            true
+                        }
+                    }
+                    Err(_) => {
+                        false
+                    }
+                };
+                ClientResponse::Move {
+                    started: was_moved
+                }
+            }
         },
         Err(e) => ClientResponse::BadRequest { err: format!("request={request_str}, reason={e}") },
     };

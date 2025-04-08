@@ -57,9 +57,9 @@ pub struct Entity {
     controller: EntityController,
 }
 
-const PLAYER_MOVEMENT_SPEED: f32 = 0.5 / 2.0;
-const NPC_MOVEMENT_SPEED: f32 = 0.35 / 2.0;
-const NPC_DIRECTION_SELECTION_TICKS: u32 = 3 * 15;
+const PLAYER_MOVEMENT_SPEED: f32 = 0.5;
+const NPC_MOVEMENT_SPEED: f32 = 0.3;
+const NPC_DIRECTION_SELECTION_TICKS: u32 = 3 * 13;
 
 impl World {
     pub const TILE_SIZE_SIDE: f32 = 5.0;
