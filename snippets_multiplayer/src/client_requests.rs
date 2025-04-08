@@ -33,6 +33,7 @@ pub enum ClientRequest {
 pub struct EntityCheckData {
     pub position: Vector2F,
     pub size: Vector2F,
+    pub color: [u8; 3],
     pub id: EntityId,
     pub name: String,
     pub is_npc: bool,
@@ -69,6 +70,7 @@ impl EntityCheckData {
             EntityCheckData {
                 name: e.name.clone(),
                 id: e.id,
+                color: e.color,
                 position: e.position,
                 is_npc: !e.is_player(),
                 size: e.size
@@ -110,21 +112,26 @@ pub fn route_request(player_id: EntityId, request_str: &str, world: Arc<Mutex<Wo
             ClientRequest::Move{dir} => {
                 let was_moved = match world.lock() {
                     Ok(mut world_guard) => {
-                        let player_pos = world_guard.get_entity_by_id(player_id).unwrap().position;
-                        let next_player_pos = player_pos + match dir {
-                            MoveDirection::Up => Vector2F::new(0.0, 1.0),
-                            MoveDirection::Down => Vector2F::new(0.0, -1.0),
-                            MoveDirection::Left => Vector2F::new(-1.0, 0.0),
-                            MoveDirection::Right => Vector2F::new(1.0, 0.0),
-                        } * 5.0;
-                        
-                        if world_guard.is_tile_occupied(&next_player_pos) {
+                        let (player_pos, player_moving) = {
+                            let player = world_guard.get_entity_by_id(player_id).unwrap();
+                            (player.position, player.is_moving())
+                        };
+                        if player_moving {
+                            // can move only after not moving
                             false
                         } else {
-                            // TODO aniamte
-                            let player = world_guard.get_entity_by_id_mut(player_id).unwrap();
-                            player.position = next_player_pos;
-                            true
+                            let next_player_pos = player_pos + match dir {
+                                MoveDirection::Up => Vector2F::new(0.0, 1.0),
+                                MoveDirection::Down => Vector2F::new(0.0, -1.0),
+                                MoveDirection::Left => Vector2F::new(-1.0, 0.0),
+                                MoveDirection::Right => Vector2F::new(1.0, 0.0),
+                            } * 5.0;
+                            
+                            if world_guard.is_tile_occupied(&next_player_pos) {
+                                false
+                            } else {
+                                world_guard.try_start_move_entity_to(player_id, next_player_pos).is_ok()
+                            }
                         }
                     }
                     Err(_) => {

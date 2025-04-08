@@ -4,7 +4,7 @@ pub type Vector2F = Vector2X<f32>;
 pub type Vector2U = Vector2X<u32>;
 pub type Vector2I = Vector2X<i32>;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Vector2X<T> {
     pub x: T,
     pub y: T,

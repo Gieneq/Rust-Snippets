@@ -2,8 +2,7 @@ use snippets_multiplayer::{
     client_requests::{ClientRequest, ClientResponse, MoveDirection}, 
     game::common::Vector2F, 
     rendering::{
-        renderer::State, 
-        EntityView
+        renderer::State, AppData, EntityView
     }, TEST_SERVER_ADRESS
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
@@ -25,9 +24,8 @@ use winit::{
 #[derive(Default)]
 struct App {
     state: Option<State>,
-    entities: Arc<Mutex<Vec<EntityView>>>,
-    scale: f32,
-    client_handler: Option<GuiClientHandle>,
+    data: Arc<Mutex<AppData>>,
+    client_handler: Option<GuiClientHandle>
 }
 
 impl ApplicationHandler for App {
@@ -47,7 +45,7 @@ impl ApplicationHandler for App {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         let state = self.state.as_mut().unwrap();
-        let entities = self.entities.clone();
+        let app_data = self.data.clone();
         match event {
             WindowEvent::CloseRequested => {
                 println!("The close button was pressed; stopping");
@@ -59,7 +57,10 @@ impl ApplicationHandler for App {
                 });
             }
             WindowEvent::RedrawRequested => {
-                state.render(entities, self.scale);
+                if let Ok(app_data_guard) = self.data.lock() {
+                    state.render(&app_data_guard)
+                };
+
                 // Emits a new redraw requested event.
                 state.get_window().request_redraw();
             }
@@ -77,7 +78,9 @@ impl ApplicationHandler for App {
                 match delta {
                     winit::event::MouseScrollDelta::LineDelta(_, y) => {
                         // y is +-1
-                        self.scale *= (1.0 + scroll_sentivity).powf(y);
+                        if let Ok(mut app_data_guard) = self.data.lock() {
+                            app_data_guard.scale *= (1.0 + scroll_sentivity).powf(y);
+                        }
                     },
                     winit::event::MouseScrollDelta::PixelDelta(_physical_position) => todo!(),
                 }
@@ -112,7 +115,7 @@ struct GuiClient {
 
 struct GuiClientHandle {
     task_handle: tokio::task::JoinHandle<()>,
-    entities: Arc<Mutex<Vec<EntityView>>>,
+    app_data: Arc<Mutex<AppData>>,
     contol_signals_tx: std::sync::mpsc::Sender<MoveDirection>
 }
 
@@ -143,14 +146,28 @@ impl GuiClient {
         }
     }
 
-    async fn run(mut self, shared_entities: Arc<Mutex<Vec<EntityView>>>) -> GuiClientHandle {
-        let shared_entities_cloned = shared_entities.clone();
-
+    async fn run(mut self, app_data: Arc<Mutex<AppData>>) -> GuiClientHandle {
+        let app_data_cloned = app_data.clone();
         let (contol_signals_tx, contol_signals_rx) = std::sync::mpsc::channel();
 
         let task_handle = tokio::task::spawn(async move {
             let (read_half, mut write_half) = self.socket.split();
             let mut buf_reader = tokio::io::BufReader::new(read_half);
+
+            // store player id
+            let player_id = {
+                let response = client_do_request_await_response(
+                    "{\"type\":\"GetId\"}",
+                    &mut buf_reader,
+                    &mut write_half
+                ).await;
+
+                if let Ok(ClientResponse::GetId { id }) = serde_json::from_str(&response) {
+                    id
+                } else {
+                    panic!("PlayerGetID parse failed")
+                }
+            };
 
             loop {
                 let response = client_do_request_await_response(
@@ -162,16 +179,20 @@ impl GuiClient {
 
                 if let ClientResponse::WorldCheck { entities } = serde_json::from_str(&response).unwrap() {
                     // Update shared data
-                    if let Ok(mut entities_guard) = shared_entities.lock() {
-                        entities_guard.clear();
+                    if let Ok(mut app_data_guard) = app_data.lock() {
+                        app_data_guard.entities.clear();
                         for entiy in entities {
-                            let color = if entiy.is_npc {
-                                [0.2, 0.2, 0.2]
-                            } else {
-                                [0.3, 0.3, 0.3]
-                            };
+                            if entiy.id == player_id {
+                                app_data_guard.camera_position = entiy.position;
+                            }
 
-                            entities_guard.push(EntityView { 
+                            let color = [
+                                entiy.color[0] as f32 / 255.0,
+                                entiy.color[1] as f32 / 255.0,
+                                entiy.color[2] as f32 / 255.0
+                            ];
+
+                            app_data_guard.entities.push(EntityView { 
                                 position: entiy.position, 
                                 size: entiy.size, 
                                 color
@@ -200,7 +221,7 @@ impl GuiClient {
 
         GuiClientHandle {
             task_handle,
-            entities: shared_entities_cloned,
+            app_data: app_data_cloned,
             contol_signals_tx
         }
     }
@@ -243,12 +264,17 @@ async fn main() {
     // event_loop.set_control_flow(ControlFlow::Wait);
 
     let mut app = App {
-        scale: 0.05,
+        data: Arc::new(Mutex::new(AppData {
+            scale: 0.5,
+            ..Default::default()
+        })),
         ..Default::default()
     };
     
     let client_handler = GuiClient::connect(TEST_SERVER_ADRESS).await
-        .run(app.entities.clone()).await;
+        .run(
+            app.data.clone()
+    ).await;
     app.client_handler = Some(client_handler);
 
     event_loop.run_app(&mut app).unwrap();

@@ -8,3 +8,12 @@ pub struct EntityView {
     pub size: Vector2F,
     pub color: [f32; 3]
 }
+
+
+
+#[derive(Default)]
+pub struct AppData {
+    pub entities: Vec<EntityView>,
+    pub camera_position: Vector2F,
+    pub scale: f32,
+}

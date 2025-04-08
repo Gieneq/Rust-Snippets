@@ -22,6 +22,20 @@ fn main() {
             world.create_entity_npc("Bucket", Vector2F::new(5.0, -5.0), Vector2F::new(4.8, 4.8));
             world.create_entity_npc("Sugar", Vector2F::new(5.0, 0.0), Vector2F::new(4.8, 4.8));
             world.create_entity_npc("Tapioka", Vector2F::new(10.0, 5.0), Vector2F::new(4.8, 4.8));
+
+            for ix in -9..9 {
+                if (-2..3).contains(&ix) {
+                    continue;
+                }
+                for iy in -5..5 {
+                    if (-2..3).contains(&iy) {
+                        continue;
+                    }
+                    let x = (ix * 5) as f32;
+                    let y = (iy * 5) as f32;
+                    world.create_entity_npc("Bot", Vector2F::new(x, y), Vector2F::new(4.8, 4.8));
+                }
+            }
         }
 
         let (ctrlc_sender, ctrlc_receiver) = tokio::sync::oneshot::channel();

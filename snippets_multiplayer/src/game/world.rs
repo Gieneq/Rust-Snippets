@@ -4,6 +4,7 @@ use rand::seq::IndexedRandom;
 #[derive(Debug)]
 pub enum WorldError {
     EntityNotExist,
+    EntityCannotMoveThere,
 }
 
 #[derive(Debug)]
@@ -51,13 +52,14 @@ pub struct Entity {
     pub id: u32,
     pub name: String,
     pub position: Vector2F,
+    pub color: [u8; 3],
     pub size: Vector2F,
     state: EntityState,
     stats: EntityStats,
     controller: EntityController,
 }
 
-const PLAYER_MOVEMENT_SPEED: f32 = 0.5;
+const PLAYER_MOVEMENT_SPEED: f32 = 0.9;
 const NPC_MOVEMENT_SPEED: f32 = 0.3;
 const NPC_DIRECTION_SELECTION_TICKS: u32 = 3 * 13;
 
@@ -85,10 +87,21 @@ impl World {
 
     pub fn create_entity_player<S: AsRef<str>>(&mut self, name: S, intial_position: Vector2F, size: Vector2F) -> EntityId {
         let intial_position = Self::get_grid_aligned_position(&intial_position);
+        let colors = [
+            [255, 0, 0],
+            [0, 255, 0],
+            [0, 0, 255],
+            [255, 0, 255],
+            [0, 255, 255],
+            [255, 255, 0],
+        ];
+        let mut rng = rand::rng();
+        let color = *colors.choose(&mut rng).unwrap();
         self.create_entity(
             name, 
             intial_position, 
             size,
+            color,
             EntityStats {
                 movement_speed: PLAYER_MOVEMENT_SPEED
             }, 
@@ -100,10 +113,13 @@ impl World {
 
     pub fn create_entity_npc<S: AsRef<str>>(&mut self, name: S, intial_position: Vector2F, size: Vector2F) -> EntityId {
         let intial_position = Self::get_grid_aligned_position(&intial_position);
+        let channel = rand::random_range(35..150);
+        let color = [channel, channel, channel];
         self.create_entity(
             name, 
             intial_position, 
             size,
+            color,
             EntityStats {
                 movement_speed: NPC_MOVEMENT_SPEED
             }, 
@@ -115,7 +131,7 @@ impl World {
         )
     }
 
-    pub fn create_entity<S: AsRef<str>>(&mut self, name: S, intial_position: Vector2F, size: Vector2F, stats: EntityStats, controller: EntityController) -> EntityId {
+    pub fn create_entity<S: AsRef<str>>(&mut self, name: S, intial_position: Vector2F, size: Vector2F, color: [u8; 3], stats: EntityStats, controller: EntityController) -> EntityId {
         let intial_position = Self::get_grid_aligned_position(&intial_position);
         let new_id = self.new_entity_id;
         self.new_entity_id += 1;
@@ -125,6 +141,7 @@ impl World {
             name: name.as_ref().to_string(),
             position: intial_position,
             size,
+            color,
             state: EntityState::Idle,
             stats,
             controller
@@ -188,16 +205,19 @@ impl World {
                 // Destination was checked when entity was idle -> no need to check
                 let direction = (destination - from_position).normal();
                 let previous_location_to_destination = destination - e.position;
-                e.position += direction * e.stats.movement_speed;
-                log::debug!("   {} moving, now in {}", e.name, e.position);    
-                let new_location_to_destination = destination - e.position;            
-
+                e.position += direction * e.stats.movement_speed;    
+                let new_location_to_destination = destination - e.position;        
+                
                 // Check if destination was reached, by checking change of dot product
-                let destination_was_reached = previous_location_to_destination.dot(new_location_to_destination) < 0.0;
+                const DOT_PRODCT_CLOSNESS_MARGIN: f32 = 0.01;
+                let transition_closness = previous_location_to_destination.dot(new_location_to_destination);    
+                let destination_was_reached = transition_closness <= DOT_PRODCT_CLOSNESS_MARGIN;
+
+                log::trace!("   {} moving, now in {}, closeness: {}", e.name, e.position, transition_closness);
 
                 // Align to destination, Change state to Idle and reset counter
                 if destination_was_reached {
-                    log::info!("   {} reached destination {} go IDLE", e.name, destination);
+                    log::debug!("   {} reached destination {} go IDLE", e.name, destination);
                     e.state = EntityState::Idle;
                     if let EntityController::Npc(npc_controller) = &mut e.controller {
                         npc_controller.change_destination_counter = NPC_DIRECTION_SELECTION_TICKS;
@@ -259,11 +279,29 @@ impl World {
         self.entities.iter()
     }
 
+    pub fn try_start_move_entity_to(&mut self, entity_id: EntityId, next_position: Vector2F) -> Result<(), WorldError> {
+        if self.is_tile_occupied(&next_position) {
+            Err(WorldError::EntityCannotMoveThere)
+        } else {
+            let entity = self.get_entity_by_id_mut(entity_id).ok_or(WorldError::EntityNotExist)?;
+            
+            entity.state = EntityState::Moving {
+                from_position: entity.position,
+                destination: next_position
+            };
+            Ok(())
+        }
+    }
+
 }
 
 impl Entity {
     pub fn is_player(&self) -> bool {
         matches!(self.controller, EntityController::Player(_))
+    }
+
+    pub fn is_moving(&self) -> bool {
+        matches!(self.state, EntityState::Moving { from_position: _, destination: _ })
     }
 }
 
